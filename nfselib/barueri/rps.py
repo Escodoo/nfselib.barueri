@@ -11,7 +11,7 @@ class RegistroTipo1(Registro):
     campos = [
         CampoPosicional("TipoRegistro", "1", True, "NUM", 1, 1, 1),
         CampoPosicional("InscricaoContribuinte", None, True, "ALFA", 7, 2, 8),
-        CampoPosicional("VersaoLayout", "PMB002", True, "NUM", 6, 9, 14),
+        CampoPosicional("VersaoLayout", "PMB002", True, "ALFA", 6, 9, 14),
         CampoPosicional("IdentificacaoRemessaContribuinte", None, True, "NUM", 11, 15, 25),
         CampoPosicional("CaracterFimLinha", "\r\n", True, "ALFA", 1, 26, 26),
     ]

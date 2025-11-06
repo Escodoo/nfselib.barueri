@@ -1,18 +1,9 @@
+import re
+import unicodedata
 
 
 class CampoPosicional:
     def __init__(self, nome, valor, obrigatorio, tipo, tamanho, posicao_inicial, posicao_final):
-        """A class representing a positional field in a file.
-
-        Args:
-            nome (str): The name of the field.
-            valor (Any): The value of the field.
-            obrigatorio (bool): Whether the field is required or not.
-            tipo (str): The type of the data ("ALFA" or "NUM").
-            tamanho (int): The size of the field.
-            posicao_inicial (int): The starting position of the field.
-            posicao_final (int): The ending position of the field.
-        """
         self.nome = nome
         self.valor = valor
         self.obrigatorio = obrigatorio
@@ -21,106 +12,109 @@ class CampoPosicional:
         self.posicao_inicial = posicao_inicial
         self.posicao_final = posicao_final
 
-    def exportar(self):
-        """Formats and exports the field value based on its type.
+    def _format_alfa(self, valor):
+        """ALFA: None -> '', pad direita com espaço"""
+        v = "" if valor is None else str(valor)
+        return v[: self.tamanho].ljust(self.tamanho, " ")
 
-        Returns:
-            str: The formatted field value.
-        """
-        if self.tipo == "ALFA":
-            formatado = str(self.valor).ljust(self.tamanho)  # Format the string as left-justified
-        elif self.tipo == "NUM":
-            formatado = str(self.valor).rjust(self.tamanho, "0")  # Format the string as right-justified with zeroes added to the left
+    def _format_num(self, valor):
+        """NUM: None/'' -> 0, mantém apenas dígitos, pad esquerda com 0."""
+        if valor is None or valor == "":
+            v = "0"
         else:
-            raise ValueError(f"Tipo desconhecido: {self.tipo}")  # Raise an error if the data type is unknown
+            v = str(valor)
+            v = re.sub(r"\D", "", v)
+            if not v:
+                v = "0"
+        v = v[-self.tamanho :].rjust(self.tamanho, "0")
+        return v
 
-        return formatado[: self.tamanho]  # Return only the first n characters of the formatted string based on the field size
+    def _sanitize_alfa(self, s: str) -> str:
+        # remove acentos (Unicode)
+        s = unicodedata.normalize("NFKD", s)
+        s = "".join(ch for ch in s if not unicodedata.combining(ch))
+        return s
+
+    # def _format_alfa(self, valor):
+    #     """ALFA: None -> '', pad direita com espaço, sem acentos."""
+    #     v = "" if valor is None else str(valor)
+    #     v = self._sanitize_alfa(v)
+    #     return v[: self.tamanho].ljust(self.tamanho, " ")
+
+    def exportar(self):
+        """Formata e exporta o campo.
+        Observação: 'CaracterFimLinha' devolve CRLF real, fora da contagem posicional.
+        """
+        if self.nome.lower() in ("caracterfimlinha", "caracter_fim_linha"):
+            return "\r\n"
+
+        if self.tipo == "ALFA":
+            return self._format_alfa(self.valor)
+        elif self.tipo == "NUM":
+            return self._format_num(self.valor)
+        else:
+            raise ValueError(f"Tipo desconhecido: {self.tipo}")
 
 
 class Registro:
     campos = []  # A list to store the fields in the record
 
-    def exportar(self):
-        """Exports the record by concatenating its fields.
+    def _validar_layout(self):
+        last_end = 0
+        fim = None
+        for c in self.campos:
+            is_fim = c.nome.lower() in ("caracterfimlinha", "caracter_fim_linha")
+            if not is_fim:
+                tam_intervalo = c.posicao_final - c.posicao_inicial + 1
+                assert tam_intervalo == c.tamanho, (
+                    f"{self.__class__.__name__}.{c.nome}: tamanho={c.tamanho} " f"!= intervalo {c.posicao_inicial}-{c.posicao_final}"
+                )
+                if last_end and c.posicao_inicial != last_end + 1:
+                    raise AssertionError(
+                        f"{self.__class__.__name__}.{c.nome}: início {c.posicao_inicial} " f"não contíguo ao fim {last_end}"
+                    )
+                last_end = c.posicao_final
+            else:
+                fim = c
+                if last_end and c.posicao_inicial != last_end + 1:
+                    raise AssertionError(
+                        f"{self.__class__.__name__}.{c.nome}: início {c.posicao_inicial} " f"não contíguo ao fim {last_end}"
+                    )
+                last_end = c.posicao_final
+        if fim is None:
+            raise AssertionError(f"{self.__class__.__name__}: faltou CaracterFimLinha")
 
-        Returns:
-            str: The concatenated fields.
-        """
-        return ''.join([campo.exportar() for campo in self.campos])
+    def exportar(self):
+        self._validar_layout()
+        return "".join(campo.exportar() for campo in self.campos)
 
     def __setattr__(self, name, value):
-        """Sets the value of a field in the record.
-
-        Args:
-            name (str): The name of the field.
-            value (Any): The new value of the field.
-
-        Raises:
-            AttributeError: If the field name is not recognized.
-        """
-        if name != "campos" and name in {campo.nome for campo in self.campos}:
+        if name != "campos" and any(c.nome == name for c in getattr(self, "campos", [])):
             for campo in self.campos:
                 if campo.nome == name:
-                    campo.valor = value  # Set the value of the field
+                    campo.valor = value
                     return
         super().__setattr__(name, value)
 
     def __getattr__(self, name):
-        """Gets the value of a field in the record.
-
-        Args:
-            name (str): The name of the field.
-
-        Raises:
-            AttributeError: If the field name is not recognized.
-
-        Returns:
-            Any: The value of the field.
-        """
-        if name in {campo.nome for campo in self.campos}:
+        if any(c.nome == name for c in getattr(self, "campos", [])):
             for campo in self.campos:
                 if campo.nome == name:
-                    return campo.valor  # Return the value of the field
-            raise AttributeError(f"Campo desconhecido: {name}")  # Raise an error if the field name is not recognized
+                    return campo.valor
+            raise AttributeError(f"Campo desconhecido: {name}")
         return super().__getattribute__(name)
 
 
 class Arquivo:
     def __init__(self, registros=None):
-        """Initializes a new file object.
-
-        Args:
-            registros (list[Registro], optional): A list of records in the file. Defaults to None.
-        """
-        if registros is None:
-            registros = []
-        self.registros = registros  # Initializes the list of records
+        self.registros = list(registros or [])
 
     def adicionar_registro(self, registro):
-        """Adds a record to the file.
-
-        Args:
-            registro (Registro): The record to be added.
-        """
         self.registros.append(registro)
 
-    def exportar_txt(self, caminho_arquivo):
-        """Exports the file as a text file.
-
-        Args:
-            caminho_arquivo (str): The file path to save the exported file.
-        """
-        with open(caminho_arquivo, "w") as arquivo:  # Opens the file for writing
-            for registro in self.registros:
-                arquivo.write(registro.exportar())  # Writes each record to the file
-
     def exportar(self):
-        """Exports the file as a string.
+        return "".join(reg.exportar() for reg in self.registros)
 
-        Returns:
-            str: The concatenated records in the file.
-        """
-        texto = ''
-        for registro in self.registros:
-            texto += registro.exportar()  # Concatenates the export of each record
-        return texto  # Returns the concatenated result
+    def exportar_txt(self, caminho_arquivo, encoding="utf-8"):
+        with open(caminho_arquivo, "w", encoding=encoding, newline="") as f:
+            f.write(self.exportar())
